@@ -320,6 +320,21 @@ pre {
 	color: #fd971f;
 }
 
+
+.title {
+	margin: 2.5em 0 0em;
+}
+
+.author {
+	color: #707070;
+	margin: 0.1em 0 2em;
+	text-align: right;
+}
+
+.author:visited {
+	color: #707070;
+}
+
 @keyframes highfade {
 	0% {
 		background-color: none;
