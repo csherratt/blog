@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta charset="utf-8" />
+		<link rel="stylesheet" type="text/css" href="../../css/style.css" />
+		<title>Specs and Legion, two very different approaches to ECS</title>
+	</head>
+<body>
+<h1>Specs and Legion, two very different approaches to ECS</h1>
+
+<p>Full disclosure, I worked on specs. I’m biased. <a href="https://github.com/amethyst/specs">Specs</a> has evolved quite a bit since I last worked on it years ago, there are some very talented developers who were willing to put in the hard work to improve it. Today it is a better library than it was when I stopped working on it. The developers have done a wonderful job of improving it.</p>
+
+<p>Still, ideas evolve, and there are always different approaches that perform better or worse. Have different ergonomic etc. <a href="https://github.com/TomGillen/legion">Legion</a> is one of the ECS that has come onto my attention as it is the <a href="https://github.com/amethyst/rfcs/issues/22">planned replacement</a> for specs in the the <a href="https://github.com/amethyst/amethyst">Amethyst</a> project. It has been a huge project to try and port the code-base over to it, and it is still not complete.</p>
+
+<h2>What is an ECS?</h2>
+
+<p>This will probably be the nth description of what an entity component system is if you are in the Rust community. In case you are unfamiliar it’s important that we get you up to speed.</p>
+
+<p>An ECS is short for an Entity-Component-System. I personally like to think about an ECS in terms of a column store database. Each column stores a component in your database, and your entity is your key to associate an object / item in a game engine across the columns. A system works on data at the column level. Components are optional, entities can contain all of them, none of them, or any unique combination of components.</p>
+
+<figure><img src="Untitled.png" alt="A simple example of of how ECS arrange data."/><figcaption>A simple example of of how ECS arrange data.</figcaption></figure>
+
+<p>So why do you need one? Well all ECS developers will claim it’s largely about performance, and show you a mountain of numbers to back it up. The more honest answer probably comes down to the difficulty of making ownership work in Rust without some type of framework to manage the transfer of ownership for you. Rust punishes poor architecture, so ECS’ are here to help.</p>
+
+<h2>Specs</h2>
+
+<p>Specs is close to the design of a classic ECS. Each component is stored in a <code>Storage</code> that contains a collection of like elements. The actual storage type can very based on how the user selects. </p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Defining a Component</span>
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">Velocity</span>(<span class="syntax-all syntax-keyword">f32</span>);
+
+<span class="syntax-all syntax-keyword">impl</span> <span class="syntax-all syntax-entity">Component</span> <span class="syntax-all syntax-keyword">for</span> <span class="syntax-all syntax-entity">Vel</span> {
+    <span class="syntax-all syntax-keyword">type</span> <span class="syntax-all syntax-entity">Storage</span> = VecStorage&lt;<span class="syntax-all syntax-keyword">Self</span>&gt;; <span class="syntax-all syntax-comment">// &lt;-- You can select the </span>
+									 <span class="syntax-all syntax-comment">// type at compile time.</span>
+}
+
+<span class="syntax-all syntax-comment">// To save some typing for a bring looking trait, there is a </span>
+<span class="syntax-all syntax-comment">// compiler plugin that does it for you!</span>
+#[derive(Component)]
+#[storage(VecStorage)]
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">Position</span>(<span class="syntax-all syntax-keyword">f32</span>);</code></pre>
+
+<p>This trait was a clever way that specs can use the compiler type system to keep track of and know statically the type of table. This avoids going via a v-table, or using one generic component storage type for all component types. When the component is requested later, the compiler will know the type and can effectively inline and optimize the iteration though the components.</p>
+
+<p>Writing a system is the next part. A system works over one or more components and does something with them. In this example it modifies the position using the velocity.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Taken directly from the specs docs</span>
+
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">SysA</span>;
+
+<span class="syntax-all syntax-keyword">impl</span>&lt;<span class="syntax-all syntax-keyword">&#39;</span><span class="syntax-all syntax-entity">a</span>&gt; <span class="syntax-all syntax-entity">System</span>&lt;<span class="syntax-all syntax-keyword">&#39;</span><span class="syntax-all syntax-entity">a</span>&gt; <span class="syntax-all syntax-keyword">for</span> <span class="syntax-all syntax-entity">SysA</span> {
+    <span class="syntax-all syntax-comment">// These are the resources required for execution.</span>
+    <span class="syntax-all syntax-comment">// You can also define a struct and `#[derive(SystemData)]`,</span>
+    <span class="syntax-all syntax-comment">// see the `full` example.</span>
+    <span class="syntax-all syntax-keyword">type</span> <span class="syntax-all syntax-entity">SystemData</span> = (WriteStorage&lt;<span class="syntax-all syntax-keyword">&#39;</span><span class="syntax-all syntax-entity">a</span>, Position&gt;, ReadStorage&lt;<span class="syntax-all syntax-keyword">&#39;</span><span class="syntax-all syntax-entity">a</span>, Velocity&gt;);
+
+    <span class="syntax-all syntax-keyword">fn</span> <span class="syntax-all syntax-entity">run</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> <span class="syntax-all syntax-constant">self</span>, (<span class="syntax-all syntax-keyword">mut</span> pos, vel): <span class="syntax-all syntax-keyword">Self</span>::SystemData) {
+        <span class="syntax-all syntax-comment">// The `.join()` combines multiple component storages,</span>
+        <span class="syntax-all syntax-comment">// so we get access to all entities which have</span>
+        <span class="syntax-all syntax-comment">// both a position and a velocity.</span>
+        <span class="syntax-all syntax-keyword">for</span> (pos, vel) <span class="syntax-all syntax-keyword">in</span> (<span class="syntax-all syntax-keyword">&amp;mut</span> pos, <span class="syntax-all syntax-keyword">&amp;</span>vel).<span class="syntax-all syntax-entity">join</span>() {
+            pos.<span class="syntax-all syntax-constant">0</span> <span class="syntax-all syntax-keyword">+=</span> vel.<span class="syntax-all syntax-constant">0</span>;
+        }
+    }
+}</code></pre>
+
+<p>Now to make this all work, specs has some ritual that is involved to setup everything. Specs has a <code>World</code> object which is used to glue everything components/entities together.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Create a world, and register the components with it</span>
+<span class="syntax-all syntax-keyword">let</span> <span class="syntax-all syntax-keyword">mut</span> world <span class="syntax-all syntax-keyword">=</span> World<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">new</span>();
+world.<span class="syntax-all syntax-entity">register</span><span class="syntax-all syntax-keyword">::</span>&lt;Position&gt;();
+world.<span class="syntax-all syntax-entity">register</span><span class="syntax-all syntax-keyword">::</span>&lt;Velocity&gt;();</code></pre>
+
+<p>Internally world creates the storage tables with each <code>register</code> and protects them with some synchronization logic. Components <em>must</em> be registered before they are used, if they are accessed by a system and were not registered, specs will panic and your game won’t be very much fun. Specs internally uses something like an <a href="https://docs.rs/anymap/0.12.1/anymap/"><code>AnyMap</code></a>, it uses typeid of the Component to relate back to the values you registered here.</p>
+
+<p>At this point, the world has enough context that you can build and register entities if you like. You don’t need to, and they can be created by the systems themselves later if you like.</p>
+
+<p>After a world is created we need to build a <code>Dispatcher</code> which is used as the puppet master of this whole operation. It will sequence the systems and execute them in parallel if they don’t have data dependencies. </p>
+
+<h3>JOIN ALL THE THINGS!</h3>
+
+<p>Join is the heart of how specs can query multiple components efficiently. It works by using a crate called <a href="https://docs.rs/hibitset/0.6.3/hibitset/">hibitset</a>. I’m going to skip some of the details of why hibitset is cool, I have talked about it at length before. The interesting bit is that all <code>Storage</code> implementations have a bitset that is associated with the Storage. This is always referenced to know if a value is present or not in the table. Even if the table has its own primary means of knowing (think a HashTable).</p>
+
+<p>This saves space as you don’t require an <code>Option&lt;T&gt;</code> when storing a vector. You can just count on the bitset to test if the value is initialized or not which is more space efficient. This also has the upside that you can combine masks together using boolean operations and then test the combined bitset to know if present in all of the components or not. For example <code>(&amp;position, &amp;velcoity).join()</code> will combine the bit sets before iterating over the content of the data.</p>
+
+<figure><img src="Join.png"/></figure>
+
+<p>There are some disadvantages of this approach. In tight loops the overhead of searching can easily dominate that actual work you are doing. <code>hibitset</code> is a rather exhaustive data structure and transversing it is not as cheap as iterating though an array, or even a hashmap.</p>
+
+<h2>Legion</h2>
+
+<p><a href="https://github.com/TomGillen/legion">Legion</a> is a new upcoming ECS that uses something called an archetype. An archetype is very different approach to the problems of an ECS. On the surface things look pretty similar.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Define our entity data types</span>
+#[derive(Clone, Copy, Debug, PartialEq)]
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">Position</span>(<span class="syntax-all syntax-keyword">f32</span>);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">Velocity</span>(<span class="syntax-all syntax-keyword">f32</span>);</code></pre>
+
+<p>Important takeaway from this little intro, Legion doesn’t require any the definition of a <code>Storage</code> type like specs did. That’s because Legion doesn’t require the creation of tables for each component type like specs did. All components get’s treated equally even if they are more common than other components.</p>
+
+<p>Like specs you have to create a <code>world</code> object to hold everything. Unlike specs this is created from a <code>Universe</code>.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-keyword">let</span> universe <span class="syntax-all syntax-keyword">=</span> Universe<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">new</span>();
+<span class="syntax-all syntax-keyword">let</span> <span class="syntax-all syntax-keyword">mut</span> world <span class="syntax-all syntax-keyword">=</span> universe.<span class="syntax-all syntax-entity">create_world</span>();</code></pre>
+
+<p>A really nice part of Legion is that the registration step is completely missing from Legion. Legion doesn’t need to know about the types that are being stored by it until they are being stored. Very cool!</p>
+
+<p>This has a benefit because you can use types defined by external libraries. With specs you are required to wrap them like this, which is annoying.</p>
+
+<pre><code class="code-highlighted code-rust">#[derive(Component)]
+<span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">InternalType</span>(ExternalType);
+<span class="syntax-all syntax-comment">// rust doesn&#39;t allow defining trait on types that you didn&#39;t define.</span></code></pre>
+
+<p>Systems are created using a builder and a closure.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-keyword">let</span> update_positions <span class="syntax-all syntax-keyword">=</span> SystemBuilder<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">new</span>(<span class="syntax-all syntax-string">&quot;update_positions&quot;</span>)
+	.<span class="syntax-all syntax-entity">with_query</span>(<span class="syntax-all syntax-keyword">&lt;</span>(Write<span class="syntax-all syntax-keyword">&lt;</span>Position<span class="syntax-all syntax-keyword">&gt;</span>, Read<span class="syntax-all syntax-keyword">&lt;</span>Velocity<span class="syntax-all syntax-keyword">&gt;</span>)<span class="syntax-all syntax-keyword">&gt;::</span><span class="syntax-all syntax-entity">query</span>())
+	.<span class="syntax-all syntax-entity">build</span>(<span class="syntax-all syntax-keyword">|</span>_, <span class="syntax-all syntax-keyword">mut</span> world, (res1, res2), query<span class="syntax-all syntax-keyword">|</span> {
+    	<span class="syntax-all syntax-keyword">for</span> (<span class="syntax-all syntax-keyword">mut</span> pos, vel) <span class="syntax-all syntax-keyword">in</span> query.<span class="syntax-all syntax-entity">iter_mut</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> world) {
+	    	pos.<span class="syntax-all syntax-constant">0</span> <span class="syntax-all syntax-keyword">+=</span> vel.<span class="syntax-all syntax-constant">0</span>;
+        }
+    });</code></pre>
+
+<p>The Systems are added to a <code>Schedule</code> which does the same thing as as Specs. Keeps systems all running in parallel without the worry of two systems fighting over the same components.</p>
+
+<h3>Archetype</h3>
+
+<p>Specs and Legion are not too different to the API user. Legion is arguably a simpler to user in fact. But how they work under the hood is where things get dramatically different. The magic of Legion is Archetypes. An Archetype is a collection of similar entities, similar defined by sharing the same set of components. Meaning an Entity with <code>Positon</code> and <code>Velocity</code> is a different archetype than one that just has <code>Positon</code> or <code>Velocity</code>.</p>
+
+<p>When an entity is written in Specs, each component gets written to a different storage column. The entity is scattered across the ECS and gets materialized during the read. In Legion, this new entity is written by it’s archetype into a single table that contains entities which identical archetypes.</p>
+
+<figure><img src="Insert.png" alt="Comparision of how data is layed out between specs and Legion"/><figcaption>Comparision of how data is layed out between specs and Legion</figcaption></figure>
+
+<p>An archetype is a grouping of like entities together. If you have entities with <code>Foo and Bar</code> and one with just <code>Foo and Baz</code> these are held in entirely different tables. Tables are created on demand as new entities are created. If most of your types are similar then they will tend to share a single table. If you have lots of different combinations it creates lots of different tables.</p>
+
+<p>This has some neat advantages! Filtering is done at the archetype level, and not at the entity level. This removes all the expensive and complicated bitmap filtering that was required by Specs to filter entities and moves the process to a pattern of selecting the correct archetypes to transverse. Optimizations are the process of removing work, and that’s a huge amount of work removed. Awesome!</p>
+
+<p>Legion doesn’t interleave the values internally in an archetypes’ storage. So it still has the advantage of being a Structure-of-Arrays rather then an Array-of-Structures. When you are querying an archetype and you don’t need all of the values it contains it doesn’t pollute your cache.</p>
+
+<p>There are some awesome goodies that are also included, like <code>tags</code> which are like components that get shared by a number of elements. But I’m not going to be going in depth over every feature Legion has.</p>
+
+<h2>No Free Lunch</h2>
+
+<p>So if you have made it this far and are willing to give Legion a try, you must be asking why would anyone want to use specs over legion?</p>
+
+<p>Legion is really optimized around queries, which is good since they are probably the most common operation an ECS does. This comes at the cost of a few operations, and you have to program around these limitations or else performance will be tanked.</p>
+
+<h3>Adding / Removing Components</h3>
+
+<p>In specs adding or removing a component from an entity is an <code>O(1)</code> operation, it’s just a matter of adding or removing a value from a table. In Legion it’s an <code>O(N)</code> operation, where <code>N</code> is the number of components that entity contains. Legion requires copying the entire entity from one table to another table, adding or removing the entity in the process.</p>
+
+<figure><img src="add.png" alt="adding a component to an entity in Legion"/><figcaption>adding a component to an entity in Legion</figcaption></figure>
+
+<p>As a side effect of this it’s best to avoid mutations to the “shape” of your entities to avoid shifting of the archetype. Just how bad is it? I did a quick benchmark where an entity with 8 components was created, I then timed how long it took to remove on of the entities. In one micro-benchmark legion took 50 times longer for a single operation.</p>
+
+<figure><img src="DraggedImage.png"/></figure>
+
+<p>So safe to say, specs is much faster at adding or removing components. The question you should ask is <em>“Does that matter to me?”</em>. Most entities do not change what components they have frame over frame, so perhaps the cost doesn’t matter. That really depends on what type of game you are writing.</p>
+
+<h3>Creating Entities</h3>
+
+<p>Creating entities is <code>O(N)</code> (where <code>N</code> is the number of components the entity is creating, not the number of entities) in both implementations. They both should preform similarly and they do, if all the conditions are setup just right. I microbenchmarked just the creation of entities and ended up trying a few different techniques. The reason this was needed is because of inefficiencies in how each implementation works.</p>
+
+<figure><img src="DraggedImage-1.png"/></figure>
+
+<p>The two benchmarks from Specs, one via the builder pattern, and the other with prelocked components tables. The builder pattern by default will lock and unlock each of the components as the entity is created. While a single lock is not expensive to lock, having to lock multiple components for each entity creation clearly has an adverse effect on performance. </p>
+
+<p>The reason why there are two benchmarks for Legion is that Legion API encourages bulk insertion. Specs has comparably less book keeping required to look up components and modify them. Legion requires searching for the correct archetype that matches it. This process is clearly fast, but noticeable in microbenchmarks. Legions’ API actually has no nice way to create a single entity.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Legion takes an iterator as input for entity creation</span>
+world.<span class="syntax-all syntax-entity">insert</span>(
+    (), <span class="syntax-all syntax-comment">// this is a tag, I&#39;ll get to it later</span>
+    (<span class="syntax-all syntax-constant">0</span>..iters).<span class="syntax-all syntax-entity">map</span>(<span class="syntax-all syntax-keyword">|</span>_<span class="syntax-all syntax-keyword">|</span> (A<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>(), B<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>()))
+);
+
+<span class="syntax-all syntax-comment">// You can of course use an Option type to mimic an iterator</span>
+<span class="syntax-all syntax-comment">// of one entity.</span>
+world.<span class="syntax-all syntax-entity">insert</span>(
+	(),
+	<span class="syntax-all syntax-constant">Some</span>((A<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>(), B<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>())).<span class="syntax-all syntax-entity">into_iter</span>()
+);</code></pre>
+
+<p>I like this API. It’s simple, and encourages the user to work the way the ECS work best. It would be maybe a little better if it was something you could chain this with inside of an iterator.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-keyword">let</span> entites: HashSet<span class="syntax-all syntax-keyword">&lt;</span>_<span class="syntax-all syntax-keyword">&gt;</span> <span class="syntax-all syntax-keyword">=</span> (<span class="syntax-all syntax-constant">0</span>..iters)
+	.<span class="syntax-all syntax-entity">map</span>(<span class="syntax-all syntax-keyword">|</span>_<span class="syntax-all syntax-keyword">|</span> (A<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>(), B<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">default</span>())
+	.<span class="syntax-all syntax-entity">insert</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> world) <span class="syntax-all syntax-comment">// &lt;-- via extention trait.</span>
+	.<span class="syntax-all syntax-entity">collect</span>();</code></pre>
+
+<p><code>world.insert()</code> does actually return a slice of entities, so the above example would be possible with some more steps. I love the iterator API, and anything that takes advantage of it is awesome in my book.</p>
+
+<h2>Iteration</h2>
+
+<p>With some of the downsides discussed, what is the main advantages of Legion’s archetype technique? The answer is iteration performance. The most common operation in an ECS is iteration over one or more components. Think velocity &amp; position, or transform and material. Legion’s archetypes are basically small filtered tables of every entity that are pre-filtered. You just have to select the the correct tables to complete your query.</p>
+
+<p>Iteration performance should be similar to iteration over a vector, since internally it is. There will be some differences, because of the use of structure-of-arrays vs array-of-structures style. In general iterating over an array is kinda like the speed-of-light of iteration performance, assuming you are using all the values you should be bandwidth limited.</p>
+
+<p>Let’s take a look a quick benchmark of the iteration performance between specs and legion. There are many factors that contribute to iteration performance. The number of entities in the dataset, the size of the components (in bytes), the number of components that we are joining, how warm the cache is. I tried to get enough benchmarks to get a solid conclusion as to what was going on.</p>
+
+<figure><img src="DraggedImage-2.png"/></figure>
+
+<p>This is the first and probably typical benchmark. The dataset is not huge, but it isn’t trivial in size either. This shows what we would expect, Legion is faster than specs in iteration performance. I added a few other entries <code>vec-aos</code> and <code>vec-soa</code> are array-of-structs and struct-of-array respectively. These just server as a baseline as they are just raw arrays with the correct datatypes in them. They give us an idea of how fast the frameworks could be if there was zero overhead.</p>
+
+<p>Legions’ performance is best with a single component, and gradually decays as more components are added. With a single component legion is more than 3 times faster than specs. It would have been interesting to see this graph go beyond 6 items, but Legion is limited by the size of tuple it built the <code>query</code> trait for, Specs can happily do up to 16 components in its <code>join</code> trait for comparison (there is no architecture reason why there are any limits, but even rust stops supplying traits at more then 12 elements).</p>
+
+<p><code>specs</code> benchmarks are much flatter by component count. The iterator overhead is the dominate factor for many of the smaller elements and it is only as the data structure gets larger that we can see any other factor. So if specs was to optimize one area to gain performance, the <code>hibitset</code> iterator should be the main target. I suspect there are some gains that can still be squeezed out of this data structure.</p>
+
+<figure><img src="DraggedImage-3.png"/></figure>
+
+<p>One of the strange things about <code>Legion</code> is that it does have an expensive setup overhead. If you only have a handful of items the time it takes to setup the iterator easily dominate the overhead from iteration over said dataset. This is to the point where in some cases <code>specs</code> overtakes and passes. The crossover point seems to be less then 100 items. We will explore this issue in a bit.</p>
+
+<p>All benchmarks are shown with <code>warm</code> or <code>cold</code>, the difference is that a cold benchmark is done after we thrashed the cache. We then do an entire iteration of the data structure in both cases. We expect warm to be faster, but this measures the effects of cache misses in worst case performance. This was one of the advantages that had been stated as an advantage for Legion over Specs. I wanted to get a better quantification of it.</p>
+
+<figure><img src="DraggedImage-4.png"/><img src="DraggedImage-5.png"/></figure>
+
+<p>I largely don’t see any major differences, both implementations do terrible compared to raw vectors with a cold cache, but the gap gradually declines as the dataset increases in size and they see the gains of pre-caching. It is interesting that the overhead form a cache miss is not enough to close the gap in the less than three component benchmarks.</p>
+
+<h3>Archetype Performance</h3>
+
+<p>Specs and Legion both have areas that can cause poor performance. As they are structured completely differently the areas that will hurt performance are different between the two implementations. The benchmark was designed to show both implementations in their best light for comparative reasons. Now let’s show them in at their worst.</p>
+
+<p>Legion’s performance decays with the number of unique archetypes that exist. The more archetypes the worse the performance will be. This wouldn’t be bad if the number of archetypes was controlled linearly with the component types, but it’s technically logarithmic. I don’t imagine there will be hundreds of archetypes, because the API discourages (via performance) adding or removing components ad-hoc from entities. But it doesn’t if just a few systems start tacking on a components to entities for their own purpose I could imagine situations where the archetypes get scattered.</p>
+
+<p>To demonstrate how bad this can be, I did a quick benchmark where I created entities with an even distribution of unique entity combinations.</p>
+
+<figure><img src="DraggedImage-6.png"/></figure>
+
+<p>These numbers are pretty terrible but that graph is showing the worst case of having a single entity that matches each archetype. The performance at <code>1</code> is a side effect of the number of cache misses that are required before you can iterate over the 1st element. With a warm cache both implementations start with similar overhead but specs quickly dominates being at best ~12 times faster. With a cold cache the gap increases to ~56 times faster in favour of specs.</p>
+
+<p>Once again these are worst case performance. If we look at how the performance changes based on the number of elements in each archetype we can see how the Legions’ performance again does converge and surpasses Specs.</p>
+
+<figure><img src="DraggedImage-7.png"/></figure>
+
+<p>This is the major tradeoff in the design of Legion. It is fast, but it is fastest when types are very homogenous. Specs doesn’t care too much about how many arrangements of components there are unless it effects component density adversely.</p>
+
+<p>So why does Legion’s performance decay? It&#39;s down to how it stores data internally. Legion stores data by their archetypes, these are then internally stored in chunks. Chunks are blocks of entities, they are all uniform sharing the same tags and the same archetypes. </p>
+
+<figure><img src="Archetypes.png" alt="Diagram of Legion&#39;s world"/><figcaption>Diagram of Legion&#39;s world</figcaption></figure>
+
+<p>Iteration in Legion is done by filtering the archetypes of the world to find matching ones with the filter (the filter being contains the correct set of archetypes). Once it finds a matching archetype it starts iteration over the chunks, and then iterates internally over that chunk’s data. In the worst case performance we have reduced the amount of data to just a single entity per archetype. This has the effect of reducing the iteration performance to something similar to a linked list.</p>
+
+<figure><img src="Archetype%20Iteration.png" alt="Example of how the iterator would have to jump around Legions&#39; data structure."/><figcaption>Example of how the iterator would have to jump around Legions&#39; data structure.</figcaption></figure>
+
+<h3>Component Density</h3>
+
+<p>Specs performance is dependent on what data structures you pick for your component types. A <code>HashMap</code> or <code>DenseVec</code> don’t largely waste much space, but they can suffer from cache locality issues during iteration as the mapping of an entity index to component is not always 1-to-1. Meaning components are pulled into the cached that won’t be read. Specs does have <code>BTreeMaps</code> and <code>Vec</code> based storage, but one is slow, and the other wastes space on unused keys. My experiments were done with <code>Vec</code> because it has the least overhead, and I wanted the most favourable numbers for both.</p>
+
+<p>While specs has a quick way of evaluating which components need to be visited, there is still a caching and pipeline advantages to Legion’s approach that make the performance of specs look pretty bad. Here is a quick benchmark of what component density looks like.</p>
+
+<figure><img src="DraggedImage-8.png"/></figure>
+
+<p>With a warm cache legion is at best 3x faster than specs. With a cold cache the gap is even larger at almost 5x faster. The highest performance delta seems to be around 1% in this case. With higher saturation the performance delta returns to normal. This minor benchmark has some issues, the most of the dataset would fit in the L1 cache of the processor with some spill into L2.</p>
+
+<p>I did another test to check how the performance looks with a larger dataset. Note, I’m not sure this is a realistic size, as iteration over such a dataset might take a millisecond or two.</p>
+
+<figure><img src="DraggedImage-9.png"/></figure>
+
+<p>With this larger dataset we can see a larger performance delta. 8x slower with a warm cache and 26x slower with a cold cache. That’s crazy. Looking at this benchmark in isolation would be enough to sell me on Legion.</p>
+
+<p>Component storage in specs doesn’t perform the way my intuitive expectations would have been. For one, the <code>BTreeMap</code> based storage is much slower than I would have expected. Its performance regresses as the dataset gets more populated. Only at very low density is the performance of the BTreeMap actually better then, but once there are more than a few components the performance advantage is lost.</p>
+
+<p><code>HashMap</code> performance also regresses as the dataset size gets large. This is an effect of the hashing algorithm at work. I wonder if in the future it would make sense to just do a custom hashing algorithm that just uses the entity index to avoid the random access pattern issues that seem to show up as a side effect of a good hashing algorithm.</p>
+
+<p><code>DenseVec</code> and <code>Vec</code> are the fastest, their performance are very close in these cases. I actually think this benchmark is a poor choice for showing the benefit of <code>DenseVec</code>. The first reason being that <code>DenseVec</code> internally has a lookup buffer that maps the entity index to the real index, this is a u32. The data we are looking up in this case is also a u32, so haven’t saved any memory and we have added indirection for no gains.</p>
+
+<figure><img src="DraggedImage-10.png"/></figure>
+
+<p>Doing a second benchmark with a larger secondary component does seem to help when the cache is cold. The performance between <code>Vec</code> and <code>DenseVec</code> is so close It’s hard to justify <code>DenseVec</code> with the exception of situations where the data structure is huge based on this benchmark alone.</p>
+
+<p>Quick summary of the datatypes in Specs based on these limited benchmarks,</p>
+
+<ul>
+	<li>Use a <code>VecStorage</code> if the type is 4 bytes or smaller, or a high percentage of the components will be using this component</li>
+	<li>Use <code>DenseVecStorage</code> for any large data types that are not applied to every component.</li>
+	<li>Use <code>BTreeMapStorage</code> or <code>HashMapStorage</code> only if you are using it for something like need to access them via something like <a href="https://docs.rs/specs/0.16.1/specs/storage/struct.Storage.html#method.unprotected_storage">unprotected_storage</a></li>
+</ul>
+
+<h4>DenseVec</h4>
+
+<p>This is a little bit of an aside, but I can’t leave a mystery as to why <code>DenseVec</code> and <code>Vec</code> performed so closely. I would have expected <code>DenseVec</code> to have some performance advantages when the saturation of entities was low, but it never showed up in the benchmark above.</p>
+
+<p>Looking at the insert logic for the <code>DenseVec</code> gives us the hint.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-keyword">pub</span> <span class="syntax-all syntax-keyword">struct</span> <span class="syntax-all syntax-entity">DenseVecStorage</span>&lt;T&gt; {
+    data: <span class="syntax-all syntax-keyword">Vec&lt;</span>T<span class="syntax-all syntax-keyword">&gt;</span>,
+    entity_id: <span class="syntax-all syntax-keyword">Vec&lt;</span>Index<span class="syntax-all syntax-keyword">&gt;</span>,
+    data_id: <span class="syntax-all syntax-keyword">Vec&lt;</span>MaybeUninit<span class="syntax-all syntax-keyword">&lt;</span>Index<span class="syntax-all syntax-keyword">&gt;&gt;</span>,
+
+
+<span class="syntax-all syntax-keyword">unsafe</span> <span class="syntax-all syntax-keyword">fn</span> <span class="syntax-all syntax-entity">insert</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> <span class="syntax-all syntax-constant">self</span>, id: Index, v: T) {
+    <span class="syntax-all syntax-keyword">let</span> id <span class="syntax-all syntax-keyword">=</span> id <span class="syntax-all syntax-keyword">as</span> <span class="syntax-all syntax-keyword">usize</span>;
+    <span class="syntax-all syntax-keyword">if</span> <span class="syntax-all syntax-constant">self</span>.data_id.<span class="syntax-all syntax-entity">len</span>() <span class="syntax-all syntax-keyword">&lt;=</span> id {
+        <span class="syntax-all syntax-keyword">let</span> delta <span class="syntax-all syntax-keyword">=</span> id <span class="syntax-all syntax-keyword">+</span> <span class="syntax-all syntax-constant">1</span> <span class="syntax-all syntax-keyword">-</span> <span class="syntax-all syntax-constant">self</span>.data_id.<span class="syntax-all syntax-entity">len</span>();
+        <span class="syntax-all syntax-constant">self</span>.data_id.<span class="syntax-all syntax-entity">reserve</span>(delta);
+        <span class="syntax-all syntax-constant">self</span>.data_id.<span class="syntax-all syntax-entity">set_len</span>(id <span class="syntax-all syntax-keyword">+</span> <span class="syntax-all syntax-constant">1</span>);
+    }
+    <span class="syntax-all syntax-constant">self</span>.data_id
+        .<span class="syntax-all syntax-entity">get_unchecked_mut</span>(id)
+        .<span class="syntax-all syntax-entity">as_mut_ptr</span>()
+        .<span class="syntax-all syntax-entity">write</span>(<span class="syntax-all syntax-constant">self</span>.data.<span class="syntax-all syntax-entity">len</span>() <span class="syntax-all syntax-keyword">as</span> Index);
+    <span class="syntax-all syntax-constant">self</span>.entity_id.<span class="syntax-all syntax-entity">push</span>(id <span class="syntax-all syntax-keyword">as</span> Index);
+    <span class="syntax-all syntax-constant">self</span>.data.<span class="syntax-all syntax-entity">push</span>(v);
+}</code></pre>
+
+<p><code>data_id</code> is a lookup table that relates the entity to data’s index and the value is stored in the <code>data</code> vector. So Basically <code>self.data[self.data_id[entity.index]]</code>. The key here is that we are always pushing the data values onto the end of the data array. So the insertion order changes the order of the elements in data. </p>
+
+<p>The logic to attach the entities to random elements in my benchmark was as follows:</p>
+
+<pre><code class="code-highlighted code-rust">entities.<span class="syntax-all syntax-entity">shuffle</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> rand<span class="syntax-all syntax-keyword">::</span><span class="syntax-all syntax-entity">thread_rng</span>());
+<span class="syntax-all syntax-keyword">for</span> <span class="syntax-all syntax-keyword">&amp;</span>entity <span class="syntax-all syntax-keyword">in</span> entities.<span class="syntax-all syntax-entity">iter</span>().<span class="syntax-all syntax-entity">take</span>(number_with_b_component) {
+    component_alt.<span class="syntax-all syntax-entity">insert</span>(entity, value).<span class="syntax-all syntax-entity">unwrap</span>();
+}</code></pre>
+
+<p>So in effect I was randomizing the order of the entities in the <code>DenseVec</code> and sabotaging its performance. I added a second set of benchmarks to just compare how <code>DenseVec</code> fairs with the same random set of entities, but this time inserted in index order.</p>
+
+<figure><img src="DraggedImage-11.png"/></figure>
+
+<p>Here we can see the performance advantage I expected. Only being slower than <code>Vec</code> with a 100% saturation. The performance delta is not small either, at peak its almost ~4 times faster. It’s surprising that <code>DenseVecStorage</code> doesn’t have a method to optimize or partial optimize the ordering of entities. It seems like an obvious feature that could run when the system has idle time, otherwise the only way to order it would be to remove all the components and reinsert them.</p>
+
+<h2>Parallelism</h2>
+
+<p>Both Specs and Legion internally use Rayon for parallelism, which is a good choice. To experiment I wanted to do something simple that was easily parallelizable. One obvious choice is a Mandelbrot set, as it was simple and embarrassingly parallel. </p>
+
+<figure><img src="specs-mandlebrot.png" alt="The Mandelbrot generated by the benchmark"/><figcaption>The Mandelbrot generated by the benchmark</figcaption></figure>
+
+<p>Both specs and legion have methods that allow iteration over entities in parallel. Specs does this via a construct called <code>par_join</code>, which is just like <code>join</code> but turns the iteration into Rayon’s parallel iterator. From that point specs’ job is done and it’s all down too Rayon to figure out how to make it fast. This looks something like this</p>
+
+<pre><code class="code-highlighted code-rust">(<span class="syntax-all syntax-keyword">&amp;</span>xy, <span class="syntax-all syntax-keyword">&amp;mut</span> rounds).<span class="syntax-all syntax-entity">par_join</span>()
+    .<span class="syntax-all syntax-entity">for_each</span>(<span class="syntax-all syntax-keyword">|</span>(<span class="syntax-all syntax-keyword">&amp;</span><span class="syntax-all syntax-entity">Coordinate</span>(x0, y0), rounds)<span class="syntax-all syntax-keyword">|</span> {
+        <span class="syntax-all syntax-keyword">let</span> (<span class="syntax-all syntax-keyword">mut</span> x, <span class="syntax-all syntax-keyword">mut</span> y) <span class="syntax-all syntax-keyword">=</span> (<span class="syntax-all syntax-constant">0</span>., <span class="syntax-all syntax-constant">0</span>.);
+        <span class="syntax-all syntax-keyword">let</span> <span class="syntax-all syntax-keyword">mut</span> i <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-constant">0</span>;
+        <span class="syntax-all syntax-keyword">while</span> i <span class="syntax-all syntax-keyword">&lt;</span> <span class="syntax-all syntax-constant">100</span> <span class="syntax-all syntax-keyword">&amp;&amp;</span> x<span class="syntax-all syntax-keyword">*</span>x <span class="syntax-all syntax-keyword">+</span> y<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">&lt;=</span> <span class="syntax-all syntax-constant">4</span>. {
+            <span class="syntax-all syntax-keyword">let</span> x_temp <span class="syntax-all syntax-keyword">=</span> x<span class="syntax-all syntax-keyword">*</span>x <span class="syntax-all syntax-keyword">-</span> y<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">+</span> x0;
+            y <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-constant">2</span>.<span class="syntax-all syntax-keyword">*</span>x<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">+</span> y0;
+            x <span class="syntax-all syntax-keyword">=</span> x_temp;
+            i <span class="syntax-all syntax-keyword">+=</span> <span class="syntax-all syntax-constant">1</span>;
+        }
+        <span class="syntax-all syntax-keyword">*</span>rounds <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-entity">Rounds</span>(i);
+    });</code></pre>
+
+<p>Legion on the other hand provides an interface called <code>par_for_each</code> which is similar but hides the details of the Rayon implementation. This is a little annoying as there are lots of nice patterns that Rayon has supplied that you can chain with your iterator. So we lose helpful methods like <code>filter</code> <code>map</code> <code>count</code> <code>reduce</code> etc. It gets left up the programmer to hopefully do efficiently.</p>
+
+<p>The equivalent Legion code looks like this:</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-keyword">let</span> query <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-keyword">&lt;</span>(Read<span class="syntax-all syntax-keyword">&lt;</span>Coordinate<span class="syntax-all syntax-keyword">&gt;</span>, Write<span class="syntax-all syntax-keyword">&lt;</span>Rounds<span class="syntax-all syntax-keyword">&gt;</span>)<span class="syntax-all syntax-keyword">&gt;::</span><span class="syntax-all syntax-entity">query</span>()
+query.<span class="syntax-all syntax-entity">par_for_each</span>(<span class="syntax-all syntax-keyword">&amp;mut</span> world, <span class="syntax-all syntax-keyword">|</span>(coord, <span class="syntax-all syntax-keyword">mut</span> rounds)<span class="syntax-all syntax-keyword">|</span> {
+    <span class="syntax-all syntax-keyword">let</span> <span class="syntax-all syntax-entity">Coordinate</span>(x0, y0) <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-keyword">*</span>coord;
+    <span class="syntax-all syntax-keyword">let</span> (<span class="syntax-all syntax-keyword">mut</span> x, <span class="syntax-all syntax-keyword">mut</span> y) <span class="syntax-all syntax-keyword">=</span> (<span class="syntax-all syntax-constant">0</span>., <span class="syntax-all syntax-constant">0</span>.);
+    <span class="syntax-all syntax-keyword">let</span> <span class="syntax-all syntax-keyword">mut</span> i <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-constant">0</span>;
+    <span class="syntax-all syntax-keyword">while</span> i <span class="syntax-all syntax-keyword">&lt;</span> <span class="syntax-all syntax-constant">100</span> <span class="syntax-all syntax-keyword">&amp;&amp;</span> x<span class="syntax-all syntax-keyword">*</span>x <span class="syntax-all syntax-keyword">+</span> y<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">&lt;=</span> <span class="syntax-all syntax-constant">4</span>. {
+        <span class="syntax-all syntax-keyword">let</span> x_temp <span class="syntax-all syntax-keyword">=</span> x<span class="syntax-all syntax-keyword">*</span>x <span class="syntax-all syntax-keyword">-</span> y<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">+</span> x0;
+        y <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-constant">2</span>.<span class="syntax-all syntax-keyword">*</span>x<span class="syntax-all syntax-keyword">*</span>y <span class="syntax-all syntax-keyword">+</span> y0;
+        x <span class="syntax-all syntax-keyword">=</span> x_temp;
+        i <span class="syntax-all syntax-keyword">+=</span> <span class="syntax-all syntax-constant">1</span>;
+    }
+    <span class="syntax-all syntax-keyword">*</span>rounds <span class="syntax-all syntax-keyword">=</span> <span class="syntax-all syntax-entity">Rounds</span>(i);
+});</code></pre>
+
+<p>Let’s take a look at how quick this is:</p>
+
+<figure><img src="DraggedImage-12.png"/></figure>
+
+<p>That’s not good. Legion in this benchmark is 40 times slower than Specs. How in that is that possible? This is just iterating over a set of entities, Legion should be faster. The only reason it would be slower is if it wasn’t actually doing it in parallel.</p>
+
+<p>After a night of digging, it looks to me like parallel iterator is broken when working with one archetype. That’s a bug and can be worked around by the developers. There is a way for us to work around to get an idea of how fast legion could be. We can manually shard the data ourselves.</p>
+
+<pre><code class="code-highlighted code-rust"><span class="syntax-all syntax-comment">// Some very cursed shard logic</span>
+<span class="syntax-all syntax-keyword">for</span> (i, entity) <span class="syntax-all syntax-keyword">in</span> entities.<span class="syntax-all syntax-entity">into_iter</span>().<span class="syntax-all syntax-entity">enumerate</span>() {
+    <span class="syntax-all syntax-keyword">let</span> n <span class="syntax-all syntax-keyword">=</span> i <span class="syntax-all syntax-keyword">%</span> <span class="syntax-all syntax-constant">256</span>;
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">1</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardA); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">2</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardB); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">4</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardC); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">8</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardD); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">16</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardE); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">32</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardF); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">64</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardG); }
+    <span class="syntax-all syntax-keyword">if</span> n <span class="syntax-all syntax-keyword">&amp;</span> <span class="syntax-all syntax-constant">128</span> <span class="syntax-all syntax-keyword">!=</span> <span class="syntax-all syntax-constant">0</span> { world.<span class="syntax-all syntax-entity">add_component</span>(entity, ShardH); }
+}</code></pre>
+
+<p>Don’t do that BTW, wait for the authors to fix Legion if you care. That single function over 1.7M data points in the Mandbrot took about 2-3 minutes of prep time before I could get to the few seconds of actual benchmarking.</p>
+
+<figure><img src="DraggedImage-13.png"/></figure>
+
+<p>There we are back to a more sane numbers. Legion is a hair behind specs, but given how cursed my sharing logic was, I’ll give it some wiggle room to say it’s multithreading is more then adequate.</p>
+
+<h2>Benchmark Weirdness</h2>
+
+<p>Before I get to my conclusions I wanted to mention some of the strange performance weirdness I had seen while evaluating these libraries. I wanted to show both libraries in the best light I could, I’d rather people be discussing their options on data structures then their opinions on my benchmarks.</p>
+
+<p>Legion didn’t compose well as an iterator. I had used <code>iter.take(N)</code> to limit the iteration to the number of elements the benchmarking framework told me to. This worked fine for Specs and Vectors, but with Legion the compiler ended up moving the benchmark to a function call and completely tanking the performance. That would have largely made this article pointless as it would just be questionable benchmarks of Specs being faster in every case. Not interesting to read, and not helpful.</p>
+
+<h2>Conclusion</h2>
+
+<p>If you stuck with me, wonderful! If you are just skipping to the end, fair enough.</p>
+
+<p>I have a few take aways from this exploration. Legion is fast, at least in its own definition of what fast is. Iteration speeds are really important and it sacrifices quite a bit to actually maximize iteration performance. </p>
+
+<p>Legion is also slow, extremely slow. If you are not used to the penalties of adding or removing components it will be a surprise how terrible the performance can be. Several of the benchmarks I created were painful to run because of how slow Legion is in creating the dataset. I imagine this might be frustrating to new comers to Legion, but it would probably be easy to identify such problems early in the development process.</p>
+
+<p>Specs should probably try and do better. Its iteration speeds seemed fast when it was introduced, but the competition was largely folk writing an ECS for the sake of getting their games design right not to wow people with performance. I do think specs could be more competitive for performance from where it stand. I don’t think there is a miracle that could make its design faster than Legions for iteration speed.</p>
+
+<p>I do think Legions’ API could use some polish. Specs feels better on the api design front, it’s APIs compose a bit better with other libraries, exposing Rayon or supporting more of libstd’s traits would be helpful. Legions’ is young and will have time to fill in these gaps. Many of these gaps are just oversights in traits that you forgot to implement, and use cases that you didn’t consider.</p>
+
+<p>There are other differences between the two frameworks that I didn’t have time to explore. If they sound interesting I encourage you to try them out.</p>
+
+<h3>Appendix </h3>
+
+<ul>
+    <li>The Benchmarks are available <a href="https://github.com/csherratt/ecs-demo">here</a>.</li>
+    <li>All benchmarking was done on a Windows 10 using a AMD Threadripper 3960x with clocks fixed at 3.8Ghz for consistency reasons.</li>
+    <li>The raw results can be found <a href="criterion/report/index.html">here</a>.</li>
+</ul>
+
+
+
+</body>
+</html>
+
